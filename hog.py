@@ -3,10 +3,11 @@ from scipy.signal import convolve2d
 from scipy.linalg import norm as l2_norm
 
 def l2_hys_norm(v, threshold=0.2):
-    # Find L2 norm
+    # Find L2 norm and normalize v
     norm = l2_norm(v)
     if norm > 0:
         v = v/norm
+
     # Apply hystersis (bound to interval(0, threshold))
     v = np.clip(v, 0, threshold)
 
@@ -17,7 +18,24 @@ def l2_hys_norm(v, threshold=0.2):
 
     return v
 
-def extract_feature_vectors(images):
+
+
+def extract_feature_vectors(images, block_size, cell_size):
+    """Extracts HOG features for each passed in image 
+    
+    Assumes square images, blocks, and cells
+    
+    Args:
+        images (List(Image)): Images to extract from.
+        block_size (int): Length of square normalization block side.
+        cell_size (int): Length of square cell side.
+
+    Returns:
+        np_array[image][cell]: 
+    
+    """
+
+    image_size = images[0].size[0]
 
     # Define gradient kernels
     sobel_x = np.array([
@@ -32,13 +50,19 @@ def extract_feature_vectors(images):
         [ 1,  2,  1] 
         ])
     
-    # features = (images, cells, hog)
-
+    # Histogram variables
     bins = 9
     bin_size = 180/bins
-    # Dimension = blocks * cells/block * histogram-entries/cell
-    D = 49 * 4 * bins
-    features = np.zeros((len(images), 49*4*bins), dtype=float)
+
+    # Dimension of Feature Vectors = (cell_size)^2 * num_histogram_bins
+    D = cell_size * cell_size * bins
+
+    sqrt_num_cells = int(image_size / cell_size)
+    sqrt_num_blocks = (sqrt_num_cells - (block_size - 1))
+    # feature = (images, total histogram entries)
+    #           (images, blocks/image * cells/block * bins/cell)
+    #           (cells, cells/image * bins/cell)
+    features = np.zeros((len(images), (sqrt_num_blocks * sqrt_num_blocks) * (block_size * block_size) * bins), dtype=float)
 
     for img_idx, image in enumerate(images):
 
@@ -55,17 +79,17 @@ def extract_feature_vectors(images):
         mag = np.hypot(G_x, G_y)
         ori = np.atan2(G_y, G_x)
 
-        # Split image into 8x8 cells
-        # "Tiles" the array in view only, no memory copying. 8x8 grid of 8x8 cells.
-        mag_cells = mag.reshape(8, 8, 8, 8).transpose(0, 2, 1, 3)
-        ori_cells = ori.reshape(8, 8, 8, 8).transpose(0, 2, 1, 3)
+        # Split image into cell_size x cell_size cells
+        # "Tiles" the array in view only, no memory copying. (image_size/cell_size) x (image_size/cell_size) grid of (cell_size) x (cell_size) cells.
+        mag_cells = mag.reshape(sqrt_num_cells, sqrt_num_cells, cell_size, cell_size).transpose(0, 2, 1, 3)
+        ori_cells = ori.reshape(sqrt_num_cells, sqrt_num_cells, cell_size, cell_size).transpose(0, 2, 1, 3)
 
-        # Flattens the view grid into sixty-four 8x8 cells
-        mag_cells = mag_cells.reshape(64, 8, 8)
-        ori_cells = ori_cells.reshape(64, 8, 8)
+        # Flattens the cell view grid into a list of cells
+        mag_cells = mag_cells.reshape(sqrt_num_cells * sqrt_num_cells, cell_size, cell_size)
+        ori_cells = ori_cells.reshape(sqrt_num_cells * sqrt_num_cells, cell_size, cell_size)
 
         # Compute histograms for each cell
-        cell_histograms = np.zeros((64,bins), dtype=float)
+        cell_histograms = np.zeros((sqrt_num_cells * sqrt_num_cells, bins), dtype=float)
         for cell_idx, (mag_cell, ori_cell) in enumerate(zip(mag_cells, ori_cells)):
             hog = np.zeros(bins)
             for mag, ori in zip(mag_cell.ravel(), ori_cell.ravel()):
@@ -83,13 +107,13 @@ def extract_feature_vectors(images):
             cell_histograms[cell_idx] = hog
 
         # Reshape cell-histograms into grid  -> (cell_x, cell_y, histogram) 
-        cell_histograms = cell_histograms.reshape(8,8,bins)
+        cell_histograms = cell_histograms.reshape(cell_size, cell_size, bins)
 
         block_histograms = []
         # Apply L2-Hys norm to each block
-        for i in range(7):
-            for j in range(7):
-                block = cell_histograms[i:i+2, j:j+2].flatten()
+        for i in range(sqrt_num_blocks):
+            for j in range(sqrt_num_blocks):
+                block = cell_histograms[i:i+block_size, j:j+block_size].flatten()
                 normalized_block = l2_hys_norm(block)
                 block_histograms.extend(normalized_block)
                                         

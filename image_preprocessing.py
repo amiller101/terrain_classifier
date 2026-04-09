@@ -3,7 +3,8 @@ from PIL import Image
 from functools import total_ordering
 import glob
 import os
-
+import random
+from itertools import chain
 
 
 # Integer terrain labels
@@ -60,7 +61,7 @@ def integer_tiling(W, H, target):
     return best
 
 
-def segmented_directory_patch_extraction(image_directory, segmentation_directory):
+def segmented_directory_patch_extraction(image_directory, segmentation_directory, test_percent):
     """Converts images into a list of per-full-image lists of labeled image-patches.
 
     Filters patches such that all are dominated by a monitored terrain type.
@@ -68,9 +69,10 @@ def segmented_directory_patch_extraction(image_directory, segmentation_directory
     Args:
         image_directory (string): Relative file path of directory with images.
         segmentation_directory (string): Relative file path of directory with pixel-annotated images.
+        test_percent (float): The ratio of the input images to use for testing (unfiltered).
 
     Returns:
-        list(list((Image, int))): List of per-full-image lists of image and their corresponding labels.
+        list(Image, int), list(Image, int): List of per-full-image lists of image and their corresponding labels, one for training and one for testing.
     
     """
 
@@ -79,12 +81,29 @@ def segmented_directory_patch_extraction(image_directory, segmentation_directory
     segmentation_paths = sorted(glob.glob(os.path.join(segmentation_directory, "**/*.png"), recursive=True))
     
     # Store each (patch-array image, label) pair into labeled_images
-    labeled_images = []
+    labeled_training_images = []
+    labeled_testing_images = []
+    test_threshold = int(100 * test_percent)
+    # Only dominance-filter training images.
+    test_num = 0
+    train_num = 0
     for image, seg in zip(image_paths, segmentation_paths):
-        labeled_images.append(segmented_image_patch_extraction(image, seg))
+        if (random.randrange(100) < test_threshold):
+            labeled_testing_images.append(unfiltered_segmented_image_patch_extraction(image, seg))        
+            test_num += 1
+        else:
+            labeled_training_images.append(filtered_segmented_image_patch_extraction(image, seg))
+            train_num += 1
+
+    # Flatten: (List(List(Image, label))) -> (List(Images, label))
+    labeled_training_images = list(chain.from_iterable(labeled_training_images))
+    labeled_testing_images = list(chain.from_iterable(labeled_testing_images))
+    print(f"full image ratio: {test_num/(test_num + train_num)}")
+    print()
+    print(f"patch image ratio: {len(labeled_testing_images)/(len(labeled_testing_images) + len(labeled_training_images))}")
 
 
-    return labeled_images
+    return labeled_training_images, labeled_testing_images
 
 
 def unsegmented_directory_patch_extraction(image_directory):
@@ -110,7 +129,7 @@ def unsegmented_directory_patch_extraction(image_directory):
     
     return images
 
-def segmented_image_patch_extraction(image_path, segmentation_path):
+def filtered_segmented_image_patch_extraction(image_path, segmentation_path):
     """Converts image into a list of labeled, tiling image-patches.
 
     Filters patches such that all are dominated by a monitored terrain type.
@@ -195,6 +214,78 @@ def segmented_image_patch_extraction(image_path, segmentation_path):
     #    img[0].show()
 
     return dominated_patches
+
+
+
+def unfiltered_segmented_image_patch_extraction(image_path, segmentation_path):
+    """Converts image into a list of labeled, tiling image-patches.
+
+    Patches with any presence of any monitored terrain type are kept.
+
+    Args:
+        image_path (string): Relative file path of images.
+        segmentation_path (string): Relative file path of pixel-annotated image.
+
+    Returns:
+        list(Image, int): List of patch-label pairs.
+    
+    """
+    
+    # Parse image
+    im = Image.open(image_path)
+
+    # Convert to greymap with standard Luma transform
+    im = im.convert("L")
+
+    # Normalize Gamma
+    gamma = 2.2
+    im = im.point(lambda i: pow((i/255), 1/gamma) * 255)
+
+    # Parse segmentation map
+    seg = Image.open(segmentation_path)
+
+    patch_size = 64
+    stride = 32
+    patches = []
+    seg_patches = []
+    for y_upper in range(0, im.height - patch_size + 1, stride):
+        for x_left in range(0, im.width - patch_size + 1, stride):
+            patch = im.crop((x_left, y_upper, x_left + patch_size, y_upper + patch_size))
+            patches.append(patch)
+            seg_patch = seg.crop((x_left, y_upper, x_left + patch_size, y_upper + patch_size))
+            seg_patches.append(seg_patch)
+
+    # Surveying the following terrain labels
+    dirt = Terrain((108, 64, 20), 1, 0)
+    grass = Terrain((0, 102, 0), 2, 0)
+    asphalt = Terrain((64, 64, 64), 3, 0)
+    gravel = Terrain((255, 128, 0), 4, 0)
+
+
+    # Save patches that contain a monitored terrain type.
+    terrain_patches = []
+    for patch, seg_patch in zip(patches, seg_patches):
+
+        # Convert patch into np array
+        patch_array = np.array(seg_patch)
+
+        # Apply terrain masks and count remaining non-zero values for each
+        dirt.count    = np.count_nonzero(np.all(patch_array == dirt.rgb, axis=-1))
+        grass.count   = np.count_nonzero(np.all(patch_array == grass.rgb, axis=-1))
+        asphalt.count = np.count_nonzero(np.all(patch_array == asphalt.rgb, axis=-1))
+        gravel.count  = np.count_nonzero(np.all(patch_array == gravel.rgb, axis=-1))
+        
+        # Check terrain spread
+        #print(f"Dirt: {dirt.count}, Grass: {grass.count}, asphalt: {asphalt.count}, gravel: {gravel.count}")
+
+        largest_terrain = max(dirt, grass, asphalt, gravel)
+        if (largest_terrain.count > 0):
+            terrain_patches.append((patch, largest_terrain.ID))
+
+    return terrain_patches
+
+
+
 
 
 

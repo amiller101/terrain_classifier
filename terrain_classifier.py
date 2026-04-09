@@ -6,9 +6,9 @@ import hog
 from operator import itemgetter
 from skimage.feature import hog as ski_hog
 from sklearn import svm
+from sklearn.feature_extraction.image import reconstruct_from_patches_2d
 from sklearn.inspection import DecisionBoundaryDisplay
 import random
-from itertools import chain
 
 def validate_hog(image_path):
     """Compare custom hog implementation with sci-kit hog.
@@ -50,13 +50,13 @@ def validate_hog(image_path):
 def main():
 
     ############ IMAGE PREPROCESSING ####################
-    
+    testing_percentage = 0.30
     ### Collect image-patches from images in a directory as training data:(X, Y)=(patch image array, terrain label array)
         #all = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\creek", "data\\RUGD_annotations\\creek")
-        #creek = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\creek", "data\\RUGD_annotations\\creek")
-    village = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\village", "data\\RUGD_annotations\\village")    
+        #creek_train, creek_test = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\creek", "data\\RUGD_annotations\\creek", testing_percentage)
+        #village_train, village_test = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\village", "data\\RUGD_annotations\\village", testing_percentage)    
         #trail11 = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\trail-11", "data\\RUGD_annotations\\trail-11")
-        #trail9 = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\trail-9", "data\\RUGD_annotations\\trail-9")
+    trail9_train, trail9_test = image_preprocessing.segmented_directory_patch_extraction("data\\RUGD_frames-with-annotations\\trail-9", "data\\RUGD_annotations\\trail-9", testing_percentage)
 
 
     ### Collect image-patches from an image as training data:(X, Y)=(patch image array, terrain label array)
@@ -82,15 +82,13 @@ def main():
     # Seperates training and testing full images randomly, not image patches.
 
     # Randomly remove testing_percent images from the training set
-    training = village
-    testing_percent = 0.30
-    testing_size = int(len(training) * testing_percent)
-    testing = [training.pop(random.randrange(len(training))) for _ in range(testing_size)]
+    # training = village
+    # testing_percent = 0.30
+    # testing_size = int(len(training) * testing_percent)
+    # testing = [training.pop(random.randrange(len(training))) for _ in range(testing_size)]
 
-
-    # Flatten: (List(List(Image, label))) -> (List(Images, label))
-    training = list(chain.from_iterable(training))
-    testing = list(chain.from_iterable(testing))
+    training = trail9_train
+    testing = trail9_test
 
     # Seperate images and labels
     training_images = list(map(itemgetter(0), training))
@@ -100,6 +98,7 @@ def main():
     testing_labels = list(map(itemgetter(1), testing))
 
     ## Experimentation
+    
         # print()
         # print(testing_images)
         # print()
@@ -114,8 +113,10 @@ def main():
     ### Dimension of each entry is 36 [(4 cells/block) * (9 bins/cell-histogram)]
 
     # Extract features
-    training_features = hog.extract_feature_vectors(training_images)
-    testing_features = hog.extract_feature_vectors(testing_images)
+    block_size = 3
+    cell_size = 8
+    training_features = hog.extract_feature_vectors(training_images, block_size, cell_size)
+    testing_features = hog.extract_feature_vectors(testing_images, block_size, cell_size)
 
 
     ### Experimentation
@@ -135,6 +136,15 @@ def main():
         print(f"\\ \\ -- Model with {k} kernel --")
         print(f"\\ Num of support vectors: {len(model.support_vectors_)}")
         print(f"\\ Accuracy: {model.score(testing_features, testing_labels)}\n")
+
+    #############   Terrain-Mapped Testing Image Reconstruction
+
+    
+    #image_size = {,,3}
+    #reconstruct_from_patches_2d()
+
+
+
 
     ##############    PLOT MANY MODELS: TO DO IN FUTURE    ##################
     # C = 1.0     # SVM Regularization parameter
